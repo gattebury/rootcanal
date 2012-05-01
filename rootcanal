@@ -1,0 +1,178 @@
+#!/usr/bin/env python
+
+import argparse, subprocess, os, sys, urllib
+from xml.dom import minidom
+from zlib import adler32
+
+
+SCRPREFIX = '/var/tmp'
+DSTPREFIX = '/mnt/hadoop/user/uscms01/pnfs/unl.edu/data4/cms'
+settings = {}
+
+
+def calcChecksum(file):
+	""" return adler32 checksum for file """
+	val = 1
+	try:
+		fp = open(file)
+		while True:
+			data = fp.read(4096)
+			if not data:
+				break
+			val = adler32(data,val)
+		if val < 0:
+			val += 2**32
+		return hex(val)[2:10].zfill(8).lower()
+	except IOError as (errno, strerror):
+		print "** I/O ERROR({0}): {1}".format(errno, strerror)
+		return ""
+
+
+def verifyFile(file, size, checksum):
+	""" verify size and checksum of file """
+	print "\t\t --- VERIFYING: %s %s %s" % (file, size, checksum)
+	if os.stat(file).st_size == size:
+		print "Filesize OK"
+	else:
+		print "Filesize FAIL"
+		return False
+	### remove leading 0s from checksum - CERN stores them that way
+	if calcChecksum(file).lstrip('0') == checksum:
+		print "Checksum OK"
+	else:
+		print "Checksum FAIL"
+		return False
+	return True
+
+
+
+def getReplicaDom(lfn):
+	""" returns dom object for a single lfn """
+	url = 'https://cmsweb.cern.ch/phedex/datasvc/xml/prod/FileReplicas?lfn=' + lfn
+	return minidom.parse(urllib.urlopen(url))
+
+def getPFNDom(lfn, site, protocol = 'srmv2'):
+	""" returns dom object for a given lfn+site+protocol """
+	url = "https://cmsweb.cern.ch/phedex/datasvc/xml/prod/LFN2PFN?node=%s&lfn=%s&protocol=%s" % (site, lfn, protocol)
+	return minidom.parse(urllib.urlopen(url))
+
+
+
+def doLFN(lfn):
+	print "\nWorking on:", lfn
+	dom = getReplicaDom(lfn)
+
+	# get size and checksum for lfn
+	checksum = str(dom.getElementsByTagName('file')[0].getAttribute('checksum')).split(',')[0].split(':')[1]
+	size = int(dom.getElementsByTagName('file')[0].getAttribute('bytes'))
+	print "\tchecksum = %s\n\tsize = %d" % (checksum, size)
+
+	# if file is already good locally, bail out
+	if verifyFile(DSTPREFIX + lfn, size, checksum):
+		print "*** file OK locally, bailing out"
+		return
+
+	# build site list where lfn lives
+	lfn_sitelist = []
+	for replica in dom.getElementsByTagName('replica'):
+		lfn_sitelist.append(str(replica.getAttribute('node')))
+	try:
+		lfn_sitelist.remove('T2_US_Nebraska')
+	except:
+		print "wasn't here to begin with..."
+
+	# prefer FNAL if exists
+	if "T1_US_FNAL_Buffer" in lfn_sitelist:
+		idx = lfn_sitelist.index('T1_US_FNAL_Buffer')
+		tmp = lfn_sitelist[0]
+		lfn_sitelist[0] = 'T1_US_FNAL_Buffer'
+		lfn_sitelist[idx] = tmp
+
+	print "\tlfn_sitelist =", lfn_sitelist
+
+	for site in lfn_sitelist:
+		# try sites until we're successful
+		print "\n\tTrying from %s" % site
+		if getLFN(lfn, site, size, checksum):
+			dstfile = '%s%s' % (DSTPREFIX, lfn)
+			print "\n\n\tGREAT SUCCESS - copying to %s" % dstfile
+
+			cmd = "sudo cp %s %s" % ((SCRPREFIX + '/' + os.path.basename(lfn)), dstfile)
+			print "\t\t-- executing:", cmd
+			subprocess.call(cmd, shell=True)
+			print "\t\t-- chowning"
+			subprocess.call("sudo chown cmsphedex:cmswrite %s" % dstfile, shell=True)
+			print "\t\t-- chmodding"
+			subprocess.call("sudo chmod 664 %s" % dstfile, shell=True)
+
+			print "\t\t-- removing tmp file"
+			subprocess.call("rm %s" % (SCRPREFIX + '/' + os.path.basename(lfn)), shell=True)
+
+			break
+
+
+
+def getLFN(lfn, site, size, checksum):
+	""" looks up PFN and tries to copy to SCRPREFIX + filename """
+	""" returns true/false based on size+checksum of downloaded file """
+	print "\n\t\t-- looking up %s at %s" % (lfn, site)
+	dom = getPFNDom(lfn, site)
+	pfn = dom.getElementsByTagName('mapping')[0].getAttribute('pfn')
+
+	cmd = "srmcp -2 -streams_num=10 -retry_num=0 %s file:///%s/%s" % (pfn, SCRPREFIX, os.path.basename(lfn))
+
+	# get file
+	print "\n\t\t-- executing:", cmd
+	try:
+		r = subprocess.call(cmd, shell=True)
+		if r == 0:
+			if verifyFile('%s/%s' % (SCRPREFIX, os.path.basename(lfn)), size, checksum):
+				print "\n-- copy ok"
+				return True
+			else:
+				print "\n-- copy failed verification"
+				return False
+		else:
+			print "\n-- srmcp failed"
+			return False
+	except ValueError:
+		print "CRAP:", ValueError
+		return False
+
+
+
+def parseArgs():
+
+	parser = argparse.ArgumentParser(description = 'Making root files less painful ...')
+	group = parser.add_mutually_exclusive_group(required=True)
+	group.add_argument('-l', '--lfn', help='LFN to process')
+	group.add_argument('-f', '--file', metavar='infile', type=argparse.FileType('r'), help='Read LFNs from file')
+	parser.add_argument('-n', '--noop', action='store_true', default=False, help='Don\'t actually do anything, dry run')
+	parser.add_argument('-s', '--skip-existing', action='store_true', default=False, help='Skip file if it exists locally, regardless of size or checksum')
+	parser.add_argument('-c', '--check-only', action='store_true', default=False, help='Check local file size and checksum only, do not attempt retransfer')
+	parser.add_argument('-v', '--verbose', action='store_true', default=False, help='Spit out more information')
+	return parser.parse_args()
+
+
+
+def main():
+
+	args = parseArgs()
+	settings['noop'] = args.noop
+	settings['verbose'] = args.verbose
+
+	# if we received a file to read from
+	if args.file:
+		for line in args.file.readlines():
+			doLFN(line[:-1])
+
+	# else we should have a single LFN to deal with
+	else:
+		doLFN(args.lfn)
+
+	sys.exit(0)
+
+
+if __name__ == '__main__':
+	main()
+
