@@ -5,9 +5,14 @@ from xml.dom import minidom
 from zlib import adler32
 
 
-SCRPREFIX = '/var/tmp'
-DSTPREFIX = '/mnt/hadoop/user/uscms01/pnfs/unl.edu/data4/cms'
-settings = {}
+class Config:
+	scratch_dir = '/var/tmp'
+	dest_prefix = '/mnt/hadoop/user/uscms01/pnfs/unl.edu/data4/cms'
+	check_only = False
+	noop = False
+	skip_existing = False
+	verbose = False
+config = Config()
 
 
 def calcChecksum(file):
@@ -30,17 +35,17 @@ def calcChecksum(file):
 
 def verifyFile(file, size, checksum):
 	""" verify size and checksum of file """
-	print "\t\t --- VERIFYING: %s %s %s" % (file, size, checksum)
+	if config.verbose:	print "\t\t --- VERIFYING: %s %s %s" % (file, size, checksum)
 	if os.stat(file).st_size == size:
-		print "Filesize OK"
+		if config.verbose:	print "Filesize OK"
 	else:
-		print "Filesize FAIL"
+		print "  Filesize FAIL"
 		return False
 	### remove leading 0s from checksum - CERN stores them that way
 	if calcChecksum(file).lstrip('0') == checksum:
-		print "Checksum OK"
+		if config.verbose:	print "Checksum OK"
 	else:
-		print "Checksum FAIL"
+		print "  Checksum FAIL"
 		return False
 	return True
 
@@ -59,16 +64,33 @@ def getPFNDom(lfn, site, protocol = 'srmv2'):
 
 
 def doLFN(lfn):
-	print "\nWorking on:", lfn
+	if config.verbose: print "\nWorking on:", lfn
 	dom = getReplicaDom(lfn)
+
+	# sanity check, does file exist locally?
+	if os.path.isfile(config.dest_prefix + lfn):
+		print "file exists locally"
+	else:
+		print "no file"
+		return
 
 	# get size and checksum for lfn
 	checksum = str(dom.getElementsByTagName('file')[0].getAttribute('checksum')).split(',')[0].split(':')[1]
 	size = int(dom.getElementsByTagName('file')[0].getAttribute('bytes'))
-	print "\tchecksum = %s\n\tsize = %d" % (checksum, size)
+	if config.verbose:	print "\n\tChecksum = %s\n\tSize = %d\n" % (checksum, size)
+
+
+	if config.check_only:
+		print "Verifying:", lfn
+		if verifyFile(config.dest_dir + lfn, size, checksum):
+			if config.verbose:	print "-- FILE OK locally"
+		else:
+			print "-- FILE CORRUPT locally"
+		return
+
 
 	# if file is already good locally, bail out
-	if verifyFile(DSTPREFIX + lfn, size, checksum):
+	if verifyFile(config.dest_prefix + lfn, size, checksum):
 		print "*** file OK locally, bailing out"
 		return
 
@@ -94,10 +116,10 @@ def doLFN(lfn):
 		# try sites until we're successful
 		print "\n\tTrying from %s" % site
 		if getLFN(lfn, site, size, checksum):
-			dstfile = '%s%s' % (DSTPREFIX, lfn)
+			dstfile = '%s%s' % (config.dest_prefix, lfn)
 			print "\n\n\tGREAT SUCCESS - copying to %s" % dstfile
 
-			cmd = "sudo cp %s %s" % ((SCRPREFIX + '/' + os.path.basename(lfn)), dstfile)
+			cmd = "sudo cp %s %s" % ((config.scratch_dir + '/' + os.path.basename(lfn)), dstfile)
 			print "\t\t-- executing:", cmd
 			subprocess.call(cmd, shell=True)
 			print "\t\t-- chowning"
@@ -106,27 +128,27 @@ def doLFN(lfn):
 			subprocess.call("sudo chmod 664 %s" % dstfile, shell=True)
 
 			print "\t\t-- removing tmp file"
-			subprocess.call("rm %s" % (SCRPREFIX + '/' + os.path.basename(lfn)), shell=True)
+			subprocess.call("rm %s" % (config.scratch_Dir + '/' + os.path.basename(lfn)), shell=True)
 
 			break
 
 
 
 def getLFN(lfn, site, size, checksum):
-	""" looks up PFN and tries to copy to SCRPREFIX + filename """
+	""" looks up PFN and tries to copy to config.scratch_dir + filename """
 	""" returns true/false based on size+checksum of downloaded file """
 	print "\n\t\t-- looking up %s at %s" % (lfn, site)
 	dom = getPFNDom(lfn, site)
 	pfn = dom.getElementsByTagName('mapping')[0].getAttribute('pfn')
 
-	cmd = "srmcp -2 -streams_num=10 -retry_num=0 %s file:///%s/%s" % (pfn, SCRPREFIX, os.path.basename(lfn))
+	cmd = "srmcp -2 -streams_num=10 -retry_num=0 %s file:///%s/%s" % (pfn, config.scratch_dir, os.path.basename(lfn))
 
 	# get file
 	print "\n\t\t-- executing:", cmd
 	try:
 		r = subprocess.call(cmd, shell=True)
 		if r == 0:
-			if verifyFile('%s/%s' % (SCRPREFIX, os.path.basename(lfn)), size, checksum):
+			if verifyFile('%s/%s' % (config.scratch_dir, os.path.basename(lfn)), size, checksum):
 				print "\n-- copy ok"
 				return True
 			else:
@@ -158,8 +180,14 @@ def parseArgs():
 def main():
 
 	args = parseArgs()
-	settings['noop'] = args.noop
-	settings['verbose'] = args.verbose
+	config.check_only = args.check_only
+	config.noop = args.noop
+	config.skip_existing = args.skip_existing
+	config.verbose = args.verbose
+
+	if config.verbose:
+		print "args=", args
+		print "settings=", settings
 
 	# if we received a file to read from
 	if args.file:
@@ -171,6 +199,7 @@ def main():
 		doLFN(args.lfn)
 
 	sys.exit(0)
+
 
 
 if __name__ == '__main__':
