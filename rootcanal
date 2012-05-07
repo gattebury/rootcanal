@@ -12,6 +12,9 @@ class Config:
 	noop = False
 	skip_existing = False
 	verbose = False
+	def __repr__(self):
+		return "\n--CONFIG--\nscratch_dir=%s\ndest_prefix=%s\ncheck_only=%d\nnoop=%d\nskip_existing=%d\nverbose=%d\n" % \
+		       (self.scratch_dir, self.dest_prefix, self.check_only, self.noop, self.skip_existing, self.verbose)
 config = Config()
 
 
@@ -35,17 +38,17 @@ def calcChecksum(file):
 
 def verifyFile(file, size, checksum):
 	""" verify size and checksum of file """
-	if config.verbose:	print "\t\t --- VERIFYING: %s %s %s" % (file, size, checksum)
+	if config.verbose:	print "  Verifying: %s %s %s" % (file, size, checksum)
 	if os.stat(file).st_size == size:
-		if config.verbose:	print "Filesize OK"
+		if config.verbose:	print "    Filesize OK"
 	else:
-		print "  Filesize FAIL"
+		print "    Filesize FAIL"
 		return False
 	### remove leading 0s from checksum - CERN stores them that way
 	if calcChecksum(file).lstrip('0') == checksum:
-		if config.verbose:	print "Checksum OK"
+		if config.verbose:	print "    Checksum OK"
 	else:
-		print "  Checksum FAIL"
+		print "    Checksum FAIL"
 		return False
 	return True
 
@@ -69,23 +72,24 @@ def doLFN(lfn):
 
 	# sanity check, does file exist locally?
 	if os.path.isfile(config.dest_prefix + lfn):
-		print "file exists locally"
+		if config.verbose:	print "  File exists locally"
 	else:
-		print "no file"
-		return
+		if config.verbose:	print "  File missing locally"
+		if config.check_only:
+			return	# bail out if we're only checking the local copy
+
 
 	# get size and checksum for lfn
 	checksum = str(dom.getElementsByTagName('file')[0].getAttribute('checksum')).split(',')[0].split(':')[1]
 	size = int(dom.getElementsByTagName('file')[0].getAttribute('bytes'))
-	if config.verbose:	print "\n\tChecksum = %s\n\tSize = %d\n" % (checksum, size)
+	if config.verbose:	print "  TMDB Checksum = %s, Size = %d" % (checksum, size)
 
 
 	if config.check_only:
-		print "Verifying:", lfn
-		if verifyFile(config.dest_dir + lfn, size, checksum):
-			if config.verbose:	print "-- FILE OK locally"
+		if verifyFile(config.dest_prefix + lfn, size, checksum):
+			if config.verbose:	print "    FILE OK locally"
 		else:
-			print "-- FILE CORRUPT locally"
+			print "    FILE CORRUPT locally"
 		return
 
 
@@ -187,7 +191,7 @@ def main():
 
 	if config.verbose:
 		print "args=", args
-		print "settings=", settings
+		print config
 
 	# if we received a file to read from
 	if args.file:
