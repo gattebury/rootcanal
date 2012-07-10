@@ -17,6 +17,10 @@ class Config:
 		       (self.scratch_dir, self.dest_prefix, self.check_only, self.noop, self.skip_existing, self.verbose)
 config = Config()
 
+missing = []	# files missing on local storage
+corrupt = []	# files with invalid checksum / size
+correct = []	# files with valid checksum / size locally
+
 
 def calcChecksum(file):
 	""" return adler32 checksum for file """
@@ -47,8 +51,10 @@ def verifyFile(file, size, checksum):
 	### remove leading 0s from checksum - CERN stores them that way
 	if calcChecksum(file).lstrip('0') == checksum:
 		if config.verbose:	print "    Checksum OK"
+		correct.append(file)
 	else:
 		print "    Checksum FAIL"
+		corrupt.append(file)
 		return False
 	return True
 
@@ -75,6 +81,7 @@ def doLFN(lfn):
 		if config.verbose:	print "  File exists locally"
 	else:
 		if config.verbose:	print "  File missing locally"
+		missing.append(lfn)
 		if config.check_only:
 			return	# bail out if we're only checking the local copy
 
@@ -132,7 +139,7 @@ def doLFN(lfn):
 			subprocess.call("sudo chmod 664 %s" % dstfile, shell=True)
 
 			print "\t\t-- removing tmp file"
-			subprocess.call("rm %s" % (config.scratch_Dir + '/' + os.path.basename(lfn)), shell=True)
+			subprocess.call("rm %s" % (config.scratch_dir + '/' + os.path.basename(lfn)), shell=True)
 
 			break
 
@@ -201,6 +208,20 @@ def main():
 	# else we should have a single LFN to deal with
 	else:
 		doLFN(args.lfn)
+
+	print "missing:", missing
+	print "corrupt:", corrupt
+	print "correct:", correct
+
+	f = open("missing_roots.txt", "w")
+	for file in missing:
+		f.write(str(file) + "\n")
+	f.close()
+
+	f = open("corrupt_roots.txt", "w")
+	for file in corrupt:
+		f.write(str(file) + "\n")
+	f.close()
 
 	sys.exit(0)
 
