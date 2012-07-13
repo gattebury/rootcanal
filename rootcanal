@@ -4,6 +4,8 @@ import argparse, subprocess, os, sys, urllib
 from xml.dom import minidom
 from zlib import adler32
 
+import rdom
+
 
 class Config:
 	scratch_dir = '/var/tmp'
@@ -86,9 +88,12 @@ def doLFN(lfn):
 			return	# bail out if we're only checking the local copy
 
 
-	# get size and checksum for lfn
-	checksum = str(dom.getElementsByTagName('file')[0].getAttribute('checksum')).split(',')[0].split(':')[1]
-	size = int(dom.getElementsByTagName('file')[0].getAttribute('bytes'))
+	# get size and checksum for lfn	### this could fail (return 0?)
+	try:
+		checksum = str(dom.getElementsByTagName('file')[0].getAttribute('checksum')).split(',')[0].split(':')[1]
+		size = int(dom.getElementsByTagName('file')[0].getAttribute('bytes'))
+	except:
+		return
 	if config.verbose:	print "  TMDB Checksum = %s, Size = %d" % (checksum, size)
 
 
@@ -101,9 +106,9 @@ def doLFN(lfn):
 
 
 	# if file is already good locally, bail out
-	if verifyFile(config.dest_prefix + lfn, size, checksum):
-		print "*** file OK locally, bailing out"
-		return
+#	if verifyFile(config.dest_prefix + lfn, size, checksum):
+#		print "*** file OK locally, bailing out"
+#		return
 
 	# build site list where lfn lives
 	lfn_sitelist = []

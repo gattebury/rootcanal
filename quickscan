@@ -1,0 +1,38 @@
+#!/usr/bin/env python
+
+""" reads 1 byte from every hdfs block in file
+    to determine if there's an unknown corruption """
+
+import sys, os, rdom
+
+HDFS_BLOCKSIZE = (64 * 1024 * 1024)
+badfp = open('/home/hep/gattebury/badfiles.txt', 'w', 1)
+
+def quickScan(file):
+	print "Scanning:", file
+	try:
+		fp = open(file, 'r')
+		while True:
+#			print "trying 1 byte from:", fp.tell()
+			data = fp.read(1)
+			if not data:
+				break
+			fp.seek(HDFS_BLOCKSIZE, 1)	# skip ahead 1 expected block size
+	except IOError as (errno, strerror):
+		print "** I/O ERROR({0}): {1}".format(errno, strerror)
+		badfp.write(file + "\n")
+		return ""
+
+
+#quickScan(sys.argv[1])
+
+numScanned = 0
+
+for root, dirs, files in os.walk('/mnt/hadoop/user/uscms01/pnfs/unl.edu/data4/cms/store/data/'):
+	for name in files:
+		numScanned = numScanned + 1
+		print "[Scaning #%d] %s" % (numScanned, os.path.join(root, name))
+		quickScan(os.path.join(root, name))
+
+
+badfp.close()
