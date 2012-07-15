@@ -3,36 +3,94 @@
 """ reads 1 byte from every hdfs block in file
     to determine if there's an unknown corruption """
 
-import sys, os, rdom
+import sys, os, time
+import Queue, threading
+
+import rdom
 
 HDFS_BLOCKSIZE = (64 * 1024 * 1024)
-badfp = open('/home/hep/gattebury/badfiles.txt', 'w', 1)
 
-def quickScan(file):
-	print "Scanning:", file
-	try:
-		fp = open(file, 'r')
+filequeue = Queue.Queue()
+badqueue = Queue.Queue()
+
+
+class NumChecked:
+	def __init__(self):
+		self.lock = threading.Lock()
+		self.value = 0
+	def increment(self):
+		self.lock.acquire()
+		self.value = value = self.value + 1
+		self.lock.release()
+		return value
+numChecked = NumChecked()
+
+
+class ThreadFile(threading.Thread):
+	def __init__(self, queue, threadID):
+		threading.Thread.__init__(self)
+		self.queue = filequeue
+		self.id = threadID
+
+	def run(self):
 		while True:
-#			print "trying 1 byte from:", fp.tell()
-			data = fp.read(1)
-			if not data:
-				break
-			fp.seek(HDFS_BLOCKSIZE, 1)	# skip ahead 1 expected block size
-	except IOError as (errno, strerror):
-		print "** I/O ERROR({0}): {1}".format(errno, strerror)
-		badfp.write(file + "\n")
-		return ""
+			file = self.queue.get()
+			counter = numChecked.increment()
+			print "qsize = %d  checked = %d  -thread %d-: %s" % (self.queue.qsize(), counter, self.id, file)
+
+			try:
+				fp = open(file, 'r')
+				while True:
+					data = fp.read(1)
+					if not data:
+						break
+					fp.seek(HDFS_BLOCKSIZE, 1)
+				fp.close()
+			except IOError as (errno, strerror):
+				print "** I/O ERROR({0}): {1}".format(errno, strerror)
+				badqueue.put(file)
+
+			self.queue.task_done()
 
 
-#quickScan(sys.argv[1])
 
-numScanned = 0
+class ThreadBad(threading.Thread):
+	def __init__(self, queue):
+		threading.Thread.__init__(self)
+		self.queue = badqueue
 
-for root, dirs, files in os.walk('/mnt/hadoop/user/uscms01/pnfs/unl.edu/data4/cms/store/data/'):
-	for name in files:
-		numScanned = numScanned + 1
-		print "[Scaning #%d] %s" % (numScanned, os.path.join(root, name))
-		quickScan(os.path.join(root, name))
+	def run(self):
+		while True:
+			badfile = self.queue.get()
+			badfp = open('/home/hep/gattebury/badfiles.txt', 'a', 1)
+			badfp.write(badfile + "\n")
+			badfp.close()
+
+			self.queue.task_done()
 
 
-badfp.close()
+def main():
+
+
+	for i in range(15):
+		t = ThreadFile(filequeue, i)
+		t.setDaemon(True)
+		t.start()
+
+	# put stuff in queue
+	print "Populating queue..."
+	for root, dirs, files in os.walk('/mnt/hadoop/user/uscms01/pnfs/unl.edu/data4/cms/store/data/'):
+		for name in files:
+			filequeue.put(os.path.join(root, name))
+
+	bt = ThreadBad(badqueue)
+	bt.setDaemon(True)
+	bt.start()
+
+	# wait on queue
+	filequeue.join()
+	badqueue.join()
+
+
+if __name__ == '__main__':
+	main()
