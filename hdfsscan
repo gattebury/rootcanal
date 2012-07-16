@@ -3,15 +3,23 @@
 """ reads 1 byte from every hdfs block in file
     to determine if there's an unknown corruption """
 
-import sys, os, time
+import argparse, os, sys, time
 import Queue, threading
-
 import rdom
 
-HDFS_BLOCKSIZE = (64 * 1024 * 1024)
+HDFS_BLOCKSIZE = (64 * 1024 * 1024)		# minimal expected block size
 
 filequeue = Queue.Queue()
 badqueue = Queue.Queue()
+
+
+class Config:
+	dir = os.getcwd()
+	threads = 1
+	verbose = False
+	def __repr__(self):
+		return "\n--CONFIG--\n\tdir=%s\n\tthreads=%d\n\tverbose=%d\n\n" % (self.dir, self.threads, self.verbose)
+config = Config()
 
 
 class NumChecked:
@@ -36,7 +44,7 @@ class ThreadFile(threading.Thread):
 		while True:
 			file = self.queue.get()
 			counter = numChecked.increment()
-			print "qsize = %d  checked = %d  -thread %d-: %s" % (self.queue.qsize(), counter, self.id, file)
+			print "[%d - %d ] Thread %d: %s" % (self.queue.qsize(), counter, self.id, file)
 
 			try:
 				fp = open(file, 'r')
@@ -62,26 +70,47 @@ class ThreadBad(threading.Thread):
 	def run(self):
 		while True:
 			badfile = self.queue.get()
-			badfp = open('/home/hep/gattebury/badfiles.txt', 'a', 1)
+			badfp = open('/home/hep/gattebury/badfiles2.txt', 'a', 1)
 			badfp.write(badfile + "\n")
 			badfp.close()
 
 			self.queue.task_done()
 
 
+def parseArgs():
+
+	parser = argparse.ArgumentParser(description = 'Quickly scans through files to detect unreadable HDFS blocks')
+	parser.add_argument('-d', '--dir', default=config.dir, help='Starting directory')
+	parser.add_argument('-t', '--threads', default=config.threads, help='Number of reader threads')
+	parser.add_argument('-v', '--verbose', action='store_true', default=False, help='Output progress information')
+	return parser.parse_args()
+
+
 def main():
 
+	args = parseArgs()
+	config.dir = args.dir
+	config.threads = int(args.threads)
+	config.verbose = args.verbose
 
-	for i in range(15):
+	if config.verbose:
+		print "args=", args
+		print config
+		return
+
+	for i in range(config.threads):
 		t = ThreadFile(filequeue, i)
 		t.setDaemon(True)
 		t.start()
 
-	# put stuff in queue
 	print "Populating queue..."
-	for root, dirs, files in os.walk('/mnt/hadoop/user/uscms01/pnfs/unl.edu/data4/cms/store/data/'):
-		for name in files:
-			filequeue.put(os.path.join(root, name))
+	# if dir is a directory, walk, else assume file
+	if os.path.isdir(config.dir):
+		for root, dirs, files in os.walk(config.dir):
+			for name in files:
+				filequeue.put(os.path.join(root, name))
+	else:
+		filequeue.put(config.dir)
 
 	bt = ThreadBad(badqueue)
 	bt.setDaemon(True)
