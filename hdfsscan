@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-""" reads 1 byte from every hdfs block in file
+""" reads 1 byte from every hdfs block in files
     to determine if there's an unknown corruption """
 
 import argparse, os, sys, time
@@ -15,10 +15,12 @@ badqueue = Queue.Queue()
 
 class Config:
 	dir = os.getcwd()
+	out = '/home/hep/gattebury/badfiles.txt'
 	threads = 1
 	verbose = False
 	def __repr__(self):
-		return "\n--CONFIG--\n\tdir=%s\n\tthreads=%d\n\tverbose=%d\n\n" % (self.dir, self.threads, self.verbose)
+		return "\n--CONFIG--\n\tdir=%s\n\tout=%s\n\tthreads=%d\n\tverbose=%d\n\n" % \
+             (self.dir, self.out, self.threads, self.verbose)
 config = Config()
 
 
@@ -44,7 +46,8 @@ class ThreadFile(threading.Thread):
 		while True:
 			file = self.queue.get()
 			counter = numChecked.increment()
-			print "[%d - %d ] Thread %d: %s" % (self.queue.qsize(), counter, self.id, file)
+			if config.verbose:
+				print "[ Q=%d  C=%d ] Thread %d: %s" % (self.queue.qsize(), counter, self.id, file)
 
 			try:
 				fp = open(file, 'r')
@@ -70,7 +73,7 @@ class ThreadBad(threading.Thread):
 	def run(self):
 		while True:
 			badfile = self.queue.get()
-			badfp = open('/home/hep/gattebury/badfiles2.txt', 'a', 1)
+			badfp = open(config.out, 'a', 1)
 			badfp.write(badfile + "\n")
 			badfp.close()
 
@@ -81,6 +84,7 @@ def parseArgs():
 
 	parser = argparse.ArgumentParser(description = 'Quickly scans through files to detect unreadable HDFS blocks')
 	parser.add_argument('-d', '--dir', default=config.dir, help='Starting directory')
+	parser.add_argument('-o', '--out', default=config.out, help='Output file')
 	parser.add_argument('-t', '--threads', default=config.threads, help='Number of reader threads')
 	parser.add_argument('-v', '--verbose', action='store_true', default=False, help='Output progress information')
 	return parser.parse_args()
@@ -96,14 +100,15 @@ def main():
 	if config.verbose:
 		print "args=", args
 		print config
-		return
 
 	for i in range(config.threads):
 		t = ThreadFile(filequeue, i)
 		t.setDaemon(True)
 		t.start()
 
-	print "Populating queue..."
+	if config.verbose:
+		print "Populating queue..."
+
 	# if dir is a directory, walk, else assume file
 	if os.path.isdir(config.dir):
 		for root, dirs, files in os.walk(config.dir):
