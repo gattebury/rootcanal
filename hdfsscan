@@ -5,7 +5,6 @@
 
 import argparse, os, sys, time
 import Queue, threading
-import rdom
 
 HDFS_BLOCKSIZE = (64 * 1024 * 1024)		# minimal expected block size
 
