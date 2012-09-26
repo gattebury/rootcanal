@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/home/hep/gattebury/bin/python-2.7.2/bin/python
 
 import argparse, subprocess, os, sys, urllib
 from xml.dom import minidom
@@ -8,230 +8,232 @@ import rdom
 
 
 class Config:
-	scratch_dir = '/var/tmp'
-	dest_prefix = '/mnt/hadoop/user/uscms01/pnfs/unl.edu/data4/cms'
-	check_only = False
-	noop = False
-	skip_existing = False
-	verbose = False
-	def __repr__(self):
-		return "\n--CONFIG--\nscratch_dir=%s\ndest_prefix=%s\ncheck_only=%d\nnoop=%d\nskip_existing=%d\nverbose=%d\n" % \
-		       (self.scratch_dir, self.dest_prefix, self.check_only, self.noop, self.skip_existing, self.verbose)
+    scratch_dir = '/var/tmp'
+    dest_prefix = '/mnt/hadoop/user/uscms01/pnfs/unl.edu/data4/cms'
+    check_only = False
+    noop = False
+    skip_existing = False
+    verbose = False
+    def __repr__(self):
+        return "\n--CONFIG--\nscratch_dir=%s\ndest_prefix=%s\ncheck_only=%d\nnoop=%d\nskip_existing=%d\nverbose=%d\n" % \
+               (self.scratch_dir, self.dest_prefix, self.check_only, self.noop, self.skip_existing, self.verbose)
 config = Config()
 
-missing = []	# files missing on local storage
-corrupt = []	# files with invalid checksum / size
-correct = []	# files with valid checksum / size locally
+missing = []    # files missing on local storage
+corrupt = []    # files with invalid checksum / size
+correct = []    # files with valid checksum / size locally
 
 
 def calcChecksum(file):
-	""" return adler32 checksum for file """
-	val = 1
-	try:
-		fp = open(file)
-		while True:
-			data = fp.read(4096)
-			if not data:
-				break
-			val = adler32(data,val)
-		if val < 0:
-			val += 2**32
-		return hex(val)[2:10].zfill(8).lower()
-	except IOError as (errno, strerror):
-		print "** I/O ERROR({0}): {1}".format(errno, strerror)
-		return ""
+    """ return adler32 checksum for file """
+    val = 1
+    try:
+        fp = open(file)
+        while True:
+            data = fp.read(4096)
+            if not data:
+                break
+            val = adler32(data,val)
+        if val < 0:
+            val += 2**32
+        return hex(val)[2:10].zfill(8).lower()
+    except IOError as (errno, strerror):
+#        print "** I/O ERROR({0}): {1}".format(errno, strerror)
+        return ""
 
 
 def verifyFile(file, size, checksum):
-	""" verify size and checksum of file """
-	if config.verbose:	print "  Verifying: %s %s %s" % (file, size, checksum)
-	if os.stat(file).st_size == size:
-		if config.verbose:	print "    Filesize OK"
-	else:
-		print "    Filesize FAIL"
-		return False
-	### remove leading 0s from checksum - CERN stores them that way
-	if calcChecksum(file).lstrip('0') == checksum:
-		if config.verbose:	print "    Checksum OK"
-		correct.append(file)
-	else:
-		print "    Checksum FAIL"
-		corrupt.append(file)
-		return False
-	return True
+    """ verify size and checksum of file """
+    if config.verbose:  sys.stdout.write( '\tVerifying filesize... ' )
+    if os.stat(file).st_size == size:
+        if config.verbose:  sys.stdout.write( 'OK\n' )
+    else:
+        sys.stdout.write( 'FAILED\n' )
+        return False
+    ### remove leading 0s from checksum - CERN stores them that way
+    if config.verbose:  sys.stdout.write( '\tVerifying checksum... ' )
+    if calcChecksum(file).lstrip('0') == checksum:
+        if config.verbose:  sys.stdout.write( 'OK\n' )
+        correct.append(file)
+    else:
+        sys.stdout.write( 'FAILED\n' )
+        corrupt.append(file)
+        return False
+    return True
 
 
 
 def getReplicaDom(lfn):
-	""" returns dom object for a single lfn """
-	url = 'https://cmsweb.cern.ch/phedex/datasvc/xml/prod/FileReplicas?lfn=' + lfn
-	return minidom.parse(urllib.urlopen(url))
+    """ returns dom object for a single lfn """
+    url = 'https://cmsweb.cern.ch/phedex/datasvc/xml/prod/FileReplicas?lfn=' + lfn
+    return minidom.parse(urllib.urlopen(url))
 
 def getPFNDom(lfn, site, protocol = 'srmv2'):
-	""" returns dom object for a given lfn+site+protocol """
-	url = "https://cmsweb.cern.ch/phedex/datasvc/xml/prod/LFN2PFN?node=%s&lfn=%s&protocol=%s" % (site, lfn, protocol)
-	return minidom.parse(urllib.urlopen(url))
+    """ returns dom object for a given lfn+site+protocol """
+    url = "https://cmsweb.cern.ch/phedex/datasvc/xml/prod/LFN2PFN?node=%s&lfn=%s&protocol=%s" % (site, lfn, protocol)
+    return minidom.parse(urllib.urlopen(url))
 
 
 
 def doLFN(lfn):
-	if config.verbose: print "\nWorking on:", lfn
-	dom = getReplicaDom(lfn)
+    if config.verbose: print "\nWorking on:", lfn
+    dom = getReplicaDom(lfn)
 
-	# sanity check, does file exist locally?
-	if os.path.isfile(config.dest_prefix + lfn):
-		if config.verbose:	print "  File exists locally"
-	else:
-		if config.verbose:	print "  File missing locally"
-		missing.append(lfn)
-		if config.check_only:
-			return	# bail out if we're only checking the local copy
-
-
-	# get size and checksum for lfn	### this could fail (return 0?)
-	try:
-		checksum = str(dom.getElementsByTagName('file')[0].getAttribute('checksum')).split(',')[0].split(':')[1]
-		size = int(dom.getElementsByTagName('file')[0].getAttribute('bytes'))
-	except:
-		return
-	if config.verbose:	print "  TMDB Checksum = %s, Size = %d" % (checksum, size)
+    # sanity check, does file exist locally?
+    if os.path.isfile(config.dest_prefix + lfn):
+        if config.verbose:  print "  File exists locally"
+    else:
+        if config.verbose:  print "  File missing locally"
+        missing.append(lfn)
+        if config.check_only:
+            return  # bail out if we're only checking the local copy
 
 
-	if config.check_only:
-		if verifyFile(config.dest_prefix + lfn, size, checksum):
-			if config.verbose:	print "    FILE OK locally"
-		else:
-			print "    FILE CORRUPT locally"
-		return
+    # get size and checksum for lfn ### this could fail (return 0?)
+    try:
+        checksum = str(dom.getElementsByTagName('file')[0].getAttribute('checksum')).split(',')[0].split(':')[1]
+        size = int(dom.getElementsByTagName('file')[0].getAttribute('bytes'))
+    except:
+        return
+    if config.verbose:  print "  TMDB Checksum = %s, Size = %d" % (checksum, size)
 
 
-	# if file is already good locally, bail out
-#	if verifyFile(config.dest_prefix + lfn, size, checksum):
-#		print "*** file OK locally, bailing out"
-#		return
+    if config.check_only:
+        if verifyFile(config.dest_prefix + lfn, size, checksum):
+            sys.stdout.write( 'CORRECT: %s\n' % lfn )
+        else:
+            sys.stdout.write( 'CORRUPT: %s\n' % lfn )
+        return
 
-	# build site list where lfn lives
-	lfn_sitelist = []
-	for replica in dom.getElementsByTagName('replica'):
-		lfn_sitelist.append(str(replica.getAttribute('node')))
-	try:
-		lfn_sitelist.remove('T2_US_Nebraska')
-	except:
-		print "wasn't here to begin with..."
 
-	# prefer FNAL if exists
-	if "T1_US_FNAL_Buffer" in lfn_sitelist:
-		idx = lfn_sitelist.index('T1_US_FNAL_Buffer')
-		tmp = lfn_sitelist[0]
-		lfn_sitelist[0] = 'T1_US_FNAL_Buffer'
-		lfn_sitelist[idx] = tmp
+    # if file is already good locally, bail out
+#   if verifyFile(config.dest_prefix + lfn, size, checksum):
+#       print "*** file OK locally, bailing out"
+#       return
 
-	print "\tlfn_sitelist =", lfn_sitelist
+    # build site list where lfn lives
+    lfn_sitelist = []
+    for replica in dom.getElementsByTagName('replica'):
+        lfn_sitelist.append(str(replica.getAttribute('node')))
+    try:
+        lfn_sitelist.remove('T2_US_Nebraska')
+    except:
+        print "wasn't here to begin with..."
 
-	for site in lfn_sitelist:
-		# try sites until we're successful
-		print "\n\tTrying from %s" % site
-		if getLFN(lfn, site, size, checksum):
-			dstfile = '%s%s' % (config.dest_prefix, lfn)
-			print "\n\n\tGREAT SUCCESS - copying to %s" % dstfile
+    # prefer FNAL if exists
+    if "T1_US_FNAL_Buffer" in lfn_sitelist:
+        idx = lfn_sitelist.index('T1_US_FNAL_Buffer')
+        tmp = lfn_sitelist[0]
+        lfn_sitelist[0] = 'T1_US_FNAL_Buffer'
+        lfn_sitelist[idx] = tmp
 
-			cmd = "sudo cp %s %s" % ((config.scratch_dir + '/' + os.path.basename(lfn)), dstfile)
-			print "\t\t-- executing:", cmd
-			subprocess.call(cmd, shell=True)
-			print "\t\t-- chowning"
-			subprocess.call("sudo chown cmsphedex:cmswrite %s" % dstfile, shell=True)
-			print "\t\t-- chmodding"
-			subprocess.call("sudo chmod 664 %s" % dstfile, shell=True)
+    print "\tlfn_sitelist =", lfn_sitelist
 
-			print "\t\t-- removing tmp file"
-			subprocess.call("rm %s" % (config.scratch_dir + '/' + os.path.basename(lfn)), shell=True)
+    for site in lfn_sitelist:
+        # try sites until we're successful
+        print "\n\tTrying from %s" % site
+        if getLFN(lfn, site, size, checksum):
+            dstfile = '%s%s' % (config.dest_prefix, lfn)
+            print "\n\n\tGREAT SUCCESS - copying to %s" % dstfile
 
-			break
+            cmd = "sudo cp %s %s" % ((config.scratch_dir + '/' + os.path.basename(lfn)), dstfile)
+            print "\t\t-- executing:", cmd
+            subprocess.call(cmd, shell=True)
+            print "\t\t-- chowning"
+            subprocess.call("sudo chown cmsphedex:cmswrite %s" % dstfile, shell=True)
+            print "\t\t-- chmodding"
+            subprocess.call("sudo chmod 664 %s" % dstfile, shell=True)
+
+            print "\t\t-- removing tmp file"
+            subprocess.call("rm %s" % (config.scratch_dir + '/' + os.path.basename(lfn)), shell=True)
+
+            break
 
 
 
 def getLFN(lfn, site, size, checksum):
-	""" looks up PFN and tries to copy to config.scratch_dir + filename """
-	""" returns true/false based on size+checksum of downloaded file """
-	print "\n\t\t-- looking up %s at %s" % (lfn, site)
-	dom = getPFNDom(lfn, site)
-	pfn = dom.getElementsByTagName('mapping')[0].getAttribute('pfn')
+    """ looks up PFN and tries to copy to config.scratch_dir + filename """
+    """ returns true/false based on size+checksum of downloaded file """
+    print "\n\t\t-- looking up %s at %s" % (lfn, site)
+    dom = getPFNDom(lfn, site)
+    pfn = dom.getElementsByTagName('mapping')[0].getAttribute('pfn')
 
-	cmd = "srmcp -2 -streams_num=10 -retry_num=0 %s file:///%s/%s" % (pfn, config.scratch_dir, os.path.basename(lfn))
+    cmd = "srmcp -2 -streams_num=10 -retry_num=0 %s file:///%s/%s" % (pfn, config.scratch_dir, os.path.basename(lfn))
 
-	# get file
-	print "\n\t\t-- executing:", cmd
-	try:
-		r = subprocess.call(cmd, shell=True)
-		if r == 0:
-			if verifyFile('%s/%s' % (config.scratch_dir, os.path.basename(lfn)), size, checksum):
-				print "\n-- copy ok"
-				return True
-			else:
-				print "\n-- copy failed verification"
-				return False
-		else:
-			print "\n-- srmcp failed"
-			return False
-	except ValueError:
-		print "CRAP:", ValueError
-		return False
+    # get file
+    print "\n\t\t-- executing:", cmd
+    try:
+        r = subprocess.call(cmd, shell=True)
+        if r == 0:
+            if verifyFile('%s/%s' % (config.scratch_dir, os.path.basename(lfn)), size, checksum):
+                print "\n-- copy ok"
+                return True
+            else:
+                print "\n-- copy failed verification"
+                return False
+        else:
+            print "\n-- srmcp failed"
+            return False
+    except ValueError:
+        print "CRAP:", ValueError
+        return False
 
 
 
 def parseArgs():
 
-	parser = argparse.ArgumentParser(description = 'Making root files less painful ...')
-	group = parser.add_mutually_exclusive_group(required=True)
-	group.add_argument('-l', '--lfn', help='LFN to process')
-	group.add_argument('-f', '--file', metavar='infile', type=argparse.FileType('r'), help='Read LFNs from file')
-	parser.add_argument('-n', '--noop', action='store_true', default=False, help='Don\'t actually do anything, dry run')
-	parser.add_argument('-s', '--skip-existing', action='store_true', default=False, help='Skip file if it exists locally, regardless of size or checksum')
-	parser.add_argument('-c', '--check-only', action='store_true', default=False, help='Check local file size and checksum only, do not attempt retransfer')
-	parser.add_argument('-v', '--verbose', action='store_true', default=False, help='Spit out more information')
-	return parser.parse_args()
+    parser = argparse.ArgumentParser(description = 'Making root files less painful ...')
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument('-l', '--lfn', help='LFN to process')
+    group.add_argument('-f', '--file', metavar='infile', type=argparse.FileType('r'), help='Read LFNs from file')
+    parser.add_argument('-n', '--noop', action='store_true', default=False, help='Don\'t actually do anything, dry run')
+    parser.add_argument('-s', '--skip-existing', action='store_true', default=False, help='Skip file if it exists locally, regardless of size or checksum')
+    parser.add_argument('-c', '--check-only', action='store_true', default=False, help='Check local file size and checksum only, do not attempt retransfer')
+    parser.add_argument('-v', '--verbose', action='store_true', default=False, help='Spit out more information')
+    return parser.parse_args()
 
 
 
 def main():
 
-	args = parseArgs()
-	config.check_only = args.check_only
-	config.noop = args.noop
-	config.skip_existing = args.skip_existing
-	config.verbose = args.verbose
+    args = parseArgs()
+    config.check_only = args.check_only
+    config.noop = args.noop
+    config.skip_existing = args.skip_existing
+    config.verbose = args.verbose
 
-	if config.verbose:
-		print "args=", args
-		print config
+    if config.verbose:
+        print "args=", args
+        print config
 
-	# if we received a file to read from
-	if args.file:
-		for line in args.file.readlines():
-			doLFN(line[:-1])
+    # if we received a file to read from
+    if args.file:
+        for line in args.file.readlines():
+            doLFN(line[:-1])
 
-	# else we should have a single LFN to deal with
-	else:
-		doLFN(args.lfn)
+    # else we should have a single LFN to deal with
+    else:
+        doLFN(args.lfn)
 
-	print "missing:", missing
-	print "corrupt:", corrupt
-	print "correct:", correct
+    print "missing:", missing
+    print "corrupt:", corrupt
+    print "correct:", correct
 
-	f = open("missing_roots.txt", "w")
-	for file in missing:
-		f.write(str(file) + "\n")
-	f.close()
+    f = open("missing_roots.txt", "w")
+    for file in missing:
+        f.write(str(file) + "\n")
+    f.close()
 
-	f = open("corrupt_roots.txt", "w")
-	for file in corrupt:
-		f.write(str(file) + "\n")
-	f.close()
+    f = open("corrupt_roots.txt", "w")
+    for file in corrupt:
+        f.write(str(file) + "\n")
+    f.close()
 
-	sys.exit(0)
+    sys.exit(0)
 
 
 
 if __name__ == '__main__':
-	main()
+    sys.stdout = os.fdopen(sys.stdout.fileno(), 'w', 0)
+    main()
 
