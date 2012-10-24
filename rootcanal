@@ -11,12 +11,13 @@ class Config:
     scratch_dir = '/var/tmp'
     dest_prefix = '/mnt/hadoop/user/uscms01/pnfs/unl.edu/data4/cms'
     check_only = False
+    node = ''
     noop = False
     skip_existing = False
     verbose = False
     def __repr__(self):
-        return "\n--CONFIG--\nscratch_dir=%s\ndest_prefix=%s\ncheck_only=%d\nnoop=%d\nskip_existing=%d\nverbose=%d\n" % \
-               (self.scratch_dir, self.dest_prefix, self.check_only, self.noop, self.skip_existing, self.verbose)
+        return "\n--CONFIG--\nscratch_dir=%s\ndest_prefix=%s\ncheck_only=%d\nnode=%s\nnoop=%d\nskip_existing=%d\nverbose=%d\n" % \
+               (self.scratch_dir, self.dest_prefix, self.check_only, self.node, self.noop, self.skip_existing, self.verbose)
 config = Config()
 
 missing = []    # files missing on local storage
@@ -127,6 +128,11 @@ def doLFN(lfn):
         lfn_sitelist[0] = 'T1_US_FNAL_Buffer'
         lfn_sitelist[idx] = tmp
 
+    # if node was specified by user,
+    # put it at front
+    if config.node != None:
+        lfn_sitelist[0] = config.node
+
     print "\tlfn_sitelist =", lfn_sitelist
 
     for site in lfn_sitelist:
@@ -186,6 +192,7 @@ def parseArgs():
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument('-l', '--lfn', help='LFN to process')
     group.add_argument('-f', '--file', metavar='infile', type=argparse.FileType('r'), help='Read LFNs from file')
+    parser.add_argument('--node', help='Site (node) to use')
     parser.add_argument('-n', '--noop', action='store_true', default=False, help='Don\'t actually do anything, dry run')
     parser.add_argument('-s', '--skip-existing', action='store_true', default=False, help='Skip file if it exists locally, regardless of size or checksum')
     parser.add_argument('-c', '--check-only', action='store_true', default=False, help='Check local file size and checksum only, do not attempt retransfer')
@@ -198,6 +205,7 @@ def main():
 
     args = parseArgs()
     config.check_only = args.check_only
+    config.node = args.node
     config.noop = args.noop
     config.skip_existing = args.skip_existing
     config.verbose = args.verbose
